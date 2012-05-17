@@ -49,7 +49,7 @@
 
 /* We need external help for these */
 
-#if !defined(HB_NO_MT) && defined(HAVE_GLIB)
+#if !defined(HB_NO_MT) && defined(HAVE_GLIB) && !defined(__APPLE__)
 
 #include <glib.h>
 typedef volatile int hb_atomic_int_t;

@@ -90,7 +90,7 @@ struct _hb_unicode_funcs_t {
 };
 
 
-#ifdef HAVE_GLIB
+#if defined(HAVE_GLIB) && !defined(__APPLE__)
 extern HB_INTERNAL hb_unicode_funcs_t _hb_glib_unicode_funcs;
 #define _hb_unicode_funcs_default _hb_glib_unicode_funcs
 #elif defined(HAVE_ICU)

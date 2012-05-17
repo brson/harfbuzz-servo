@@ -40,7 +40,7 @@
 
 /* We need external help for these */
 
-#if !defined(HB_NO_MT) && defined(HAVE_GLIB)
+#if !defined(HB_NO_MT) && defined(HAVE_GLIB) && !defined(__APPLE__)
 
 #include <glib.h>
 typedef GStaticMutex hb_mutex_impl_t;
