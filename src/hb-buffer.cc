@@ -37,21 +37,8 @@
 #define HB_DEBUG_BUFFER (HB_DEBUG+0)
 #endif
 
-
-static hb_buffer_t _hb_buffer_nil = {
-  HB_OBJECT_HEADER_STATIC,
-
-  &_hb_unicode_funcs_default,
-  {
-    HB_DIRECTION_INVALID,
-    HB_SCRIPT_INVALID,
-    NULL,
-  },
-
-  TRUE, /* in_error */
-  TRUE, /* have_output */
-  TRUE  /* have_positions */
-};
+#define _HB_BUFFER_UNICODE_FUNCS_DEFAULT (const_cast<hb_unicode_funcs_t *> (&_hb_unicode_funcs_default))
+#define _HB_BUFFER_PROPS_DEFAULT { HB_DIRECTION_INVALID, HB_SCRIPT_INVALID, HB_LANGUAGE_INVALID }
 
 /* Here is how the buffer works internally:
  *
@@ -79,7 +66,7 @@ bool
 hb_buffer_t::enlarge (unsigned int size)
 {
   if (unlikely (in_error))
-    return FALSE;
+    return false;
 
   unsigned int new_allocated = allocated;
   hb_glyph_position_t *new_pos = NULL;
@@ -101,7 +88,7 @@ hb_buffer_t::enlarge (unsigned int size)
 
 done:
   if (unlikely (!new_pos || !new_info))
-    in_error = TRUE;
+    in_error = true;
 
   if (likely (new_pos))
     pos = new_pos;
@@ -120,7 +107,7 @@ bool
 hb_buffer_t::make_room_for (unsigned int num_in,
 			    unsigned int num_out)
 {
-  if (unlikely (!ensure (out_len + num_out))) return FALSE;
+  if (unlikely (!ensure (out_len + num_out))) return false;
 
   if (out_info == info &&
       out_len + num_out > idx + num_in)
@@ -131,15 +118,18 @@ hb_buffer_t::make_room_for (unsigned int num_in,
     memcpy (out_info, info, out_len * sizeof (out_info[0]));
   }
 
-  return TRUE;
+  return true;
 }
 
 void *
 hb_buffer_t::get_scratch_buffer (unsigned int *size)
 {
-  have_output = FALSE;
-  have_positions = FALSE;
+  have_output = false;
+  have_positions = false;
+
   out_len = 0;
+  out_info = info;
+
   *size = allocated * sizeof (pos[0]);
   return pos;
 }
@@ -154,23 +144,23 @@ hb_buffer_t::reset (void)
     return;
 
   hb_unicode_funcs_destroy (unicode);
-  unicode = _hb_buffer_nil.unicode;
+  unicode = _HB_BUFFER_UNICODE_FUNCS_DEFAULT;
 
-  props = _hb_buffer_nil.props;
+  hb_segment_properties_t default_props = _HB_BUFFER_PROPS_DEFAULT;
+  props = default_props;
 
-  in_error = FALSE;
-  have_output = FALSE;
-  have_positions = FALSE;
+  in_error = false;
+  have_output = false;
+  have_positions = false;
 
   idx = 0;
   len = 0;
   out_len = 0;
+  out_info = info;
 
   serial = 0;
   memset (allocated_var_bytes, 0, sizeof allocated_var_bytes);
   memset (allocated_var_owner, 0, sizeof allocated_var_owner);
-
-  out_info = info;
 }
 
 void
@@ -198,8 +188,8 @@ hb_buffer_t::clear_output (void)
   if (unlikely (hb_object_is_inert (this)))
     return;
 
-  have_output = TRUE;
-  have_positions = FALSE;
+  have_output = true;
+  have_positions = false;
 
   out_len = 0;
   out_info = info;
@@ -211,8 +201,11 @@ hb_buffer_t::clear_positions (void)
   if (unlikely (hb_object_is_inert (this)))
     return;
 
-  have_output = FALSE;
-  have_positions = TRUE;
+  have_output = false;
+  have_positions = true;
+
+  out_len = 0;
+  out_info = info;
 
   memset (pos, 0, sizeof (pos[0]) * len);
 }
@@ -223,7 +216,7 @@ hb_buffer_t::swap_buffers (void)
   if (unlikely (in_error)) return;
 
   assert (have_output);
-  have_output = FALSE;
+  have_output = false;
 
   if (out_info != info)
   {
@@ -243,45 +236,15 @@ hb_buffer_t::swap_buffers (void)
 }
 
 void
-hb_buffer_t::replace_glyphs_be16 (unsigned int num_in,
-				  unsigned int num_out,
-				  const uint16_t *glyph_data_be)
-{
-  if (!make_room_for (num_in, num_out)) return;
-
-  hb_glyph_info_t orig_info = info[idx];
-  for (unsigned int i = 1; i < num_in; i++)
-  {
-    hb_glyph_info_t *inf = &info[idx + i];
-    orig_info.cluster = MIN (orig_info.cluster, inf->cluster);
-  }
-
-  hb_glyph_info_t *pinfo = &out_info[out_len];
-  for (unsigned int i = 0; i < num_out; i++)
-  {
-    *pinfo = orig_info;
-    pinfo->codepoint = hb_be_uint16 (glyph_data_be[i]);
-    pinfo++;
-  }
-
-  idx  += num_in;
-  out_len += num_out;
-}
-
-void
 hb_buffer_t::replace_glyphs (unsigned int num_in,
 			     unsigned int num_out,
 			     const uint32_t *glyph_data)
 {
   if (!make_room_for (num_in, num_out)) return;
 
-  hb_glyph_info_t orig_info = info[idx];
-  for (unsigned int i = 1; i < num_in; i++)
-  {
-    hb_glyph_info_t *inf = &info[idx + i];
-    orig_info.cluster = MIN (orig_info.cluster, inf->cluster);
-  }
+  merge_clusters (idx, idx + num_in);
 
+  hb_glyph_info_t orig_info = info[idx];
   hb_glyph_info_t *pinfo = &out_info[out_len];
   for (unsigned int i = 0; i < num_out; i++)
   {
@@ -435,23 +398,57 @@ void
 hb_buffer_t::merge_clusters (unsigned int start,
 			     unsigned int end)
 {
-  unsigned int cluster = this->info[start].cluster;
+  if (unlikely (end - start < 2))
+    return;
+
+  unsigned int cluster = info[start].cluster;
 
   for (unsigned int i = start + 1; i < end; i++)
-    cluster = MIN (cluster, this->info[i].cluster);
+    cluster = MIN (cluster, info[i].cluster);
+
+  /* Extend end */
+  while (end < len && info[end - 1].cluster == info[end].cluster)
+    end++;
+
+  /* Extend start */
+  while (idx < start && info[start - 1].cluster == info[start].cluster)
+    start--;
+
+  /* If we hit the start of buffer, continue in out-buffer. */
+  if (idx == start)
+    for (unsigned i = out_len; i && out_info[i - 1].cluster == info[start].cluster; i--)
+      out_info[i - 1].cluster = cluster;
+
   for (unsigned int i = start; i < end; i++)
-    this->info[i].cluster = cluster;
+    info[i].cluster = cluster;
 }
 void
 hb_buffer_t::merge_out_clusters (unsigned int start,
 				 unsigned int end)
 {
-  unsigned int cluster = this->out_info[start].cluster;
+  if (unlikely (end - start < 2))
+    return;
+
+  unsigned int cluster = out_info[start].cluster;
 
   for (unsigned int i = start + 1; i < end; i++)
-    cluster = MIN (cluster, this->out_info[i].cluster);
+    cluster = MIN (cluster, out_info[i].cluster);
+
+  /* Extend start */
+  while (start && out_info[start - 1].cluster == out_info[start].cluster)
+    start--;
+
+  /* Extend end */
+  while (end < out_len && out_info[end - 1].cluster == out_info[end].cluster)
+    end++;
+
+  /* If we hit the end of out-buffer, continue in buffer. */
+  if (end == out_len)
+    for (unsigned i = idx; i < len && info[i].cluster == out_info[end - 1].cluster; i++)
+      info[i].cluster = cluster;
+
   for (unsigned int i = start; i < end; i++)
-    this->out_info[i].cluster = cluster;
+    out_info[i].cluster = cluster;
 }
 
 void
@@ -543,7 +540,7 @@ hb_buffer_create ()
   hb_buffer_t *buffer;
 
   if (!(buffer = hb_object_create<hb_buffer_t> ()))
-    return &_hb_buffer_nil;
+    return hb_buffer_get_empty ();
 
   buffer->reset ();
 
@@ -553,7 +550,18 @@ hb_buffer_create ()
 hb_buffer_t *
 hb_buffer_get_empty (void)
 {
-  return &_hb_buffer_nil;
+  static const hb_buffer_t _hb_buffer_nil = {
+    HB_OBJECT_HEADER_STATIC,
+
+    _HB_BUFFER_UNICODE_FUNCS_DEFAULT,
+    _HB_BUFFER_PROPS_DEFAULT,
+
+    true, /* in_error */
+    true, /* have_output */
+    true  /* have_positions */
+  };
+
+  return const_cast<hb_buffer_t *> (&_hb_buffer_nil);
 }
 
 hb_buffer_t *
@@ -601,7 +609,7 @@ hb_buffer_set_unicode_funcs (hb_buffer_t        *buffer,
     return;
 
   if (!unicode)
-    unicode = _hb_buffer_nil.unicode;
+    unicode = _HB_BUFFER_UNICODE_FUNCS_DEFAULT;
 
   hb_unicode_funcs_reference (unicode);
   hb_unicode_funcs_destroy (buffer->unicode);
@@ -695,8 +703,11 @@ hb_bool_t
 hb_buffer_set_length (hb_buffer_t  *buffer,
 		      unsigned int  length)
 {
+  if (unlikely (hb_object_is_inert (buffer)))
+    return length == 0;
+
   if (!buffer->ensure (length))
-    return FALSE;
+    return false;
 
   /* Wipe the new space */
   if (length > buffer->len) {
@@ -706,7 +717,7 @@ hb_buffer_set_length (hb_buffer_t  *buffer,
   }
 
   buffer->len = length;
-  return TRUE;
+  return true;
 }
 
 unsigned int
@@ -881,3 +892,79 @@ hb_buffer_add_utf32 (hb_buffer_t    *buffer,
 }
 
 
+static int
+compare_info_codepoint (const hb_glyph_info_t *pa,
+			const hb_glyph_info_t *pb)
+{
+  return (int) pb->codepoint - (int) pa->codepoint;
+}
+
+static inline void
+normalize_glyphs_cluster (hb_buffer_t *buffer,
+			  unsigned int start,
+			  unsigned int end,
+			  bool backward)
+{
+  hb_glyph_position_t *pos = buffer->pos;
+
+  /* Total cluster advance */
+  hb_position_t total_x_advance = 0, total_y_advance = 0;
+  for (unsigned int i = start; i < end; i++)
+  {
+    total_x_advance += pos[i].x_advance;
+    total_y_advance += pos[i].y_advance;
+  }
+
+  hb_position_t x_advance = 0, y_advance = 0;
+  for (unsigned int i = start; i < end; i++)
+  {
+    pos[i].x_offset += x_advance;
+    pos[i].y_offset += y_advance;
+
+    x_advance += pos[i].x_advance;
+    y_advance += pos[i].y_advance;
+
+    pos[i].x_advance = 0;
+    pos[i].y_advance = 0;
+  }
+
+  if (backward)
+  {
+    /* Transfer all cluster advance to the last glyph. */
+    pos[end - 1].x_advance = total_x_advance;
+    pos[end - 1].y_advance = total_y_advance;
+
+    hb_bubble_sort (buffer->info + start, end - start - 1, compare_info_codepoint, buffer->pos + start);
+  } else {
+    /* Transfer all cluster advance to the first glyph. */
+    pos[start].x_advance += total_x_advance;
+    pos[start].y_advance += total_y_advance;
+    for (unsigned int i = start + 1; i < end; i++) {
+      pos[i].x_offset -= total_x_advance;
+      pos[i].y_offset -= total_y_advance;
+    }
+    hb_bubble_sort (buffer->info + start + 1, end - start - 1, compare_info_codepoint, buffer->pos + start + 1);
+  }
+}
+
+void
+hb_buffer_normalize_glyphs (hb_buffer_t *buffer)
+{
+  assert (buffer->have_positions);
+  /* XXX assert (buffer->have_glyphs); */
+
+  bool backward = HB_DIRECTION_IS_BACKWARD (buffer->props.direction);
+
+  unsigned int count = buffer->len;
+  if (unlikely (!count)) return;
+  hb_glyph_info_t *info = buffer->info;
+
+  unsigned int start = 0;
+  unsigned int end;
+  for (end = start + 1; end < count; end++)
+    if (info[start].cluster != info[end].cluster) {
+      normalize_glyphs_cluster (buffer, start, end, backward);
+      start = end;
+    }
+  normalize_glyphs_cluster (buffer, start, end, backward);
+}

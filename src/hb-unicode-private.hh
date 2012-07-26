@@ -61,8 +61,9 @@
   HB_UNICODE_FUNC_IMPLEMENT (hb_script_t, script) \
   /* ^--- Add new simple callbacks here */
 
-struct _hb_unicode_funcs_t {
+struct hb_unicode_funcs_t {
   hb_object_header_t header;
+  ASSERT_POD ();
 
   hb_unicode_funcs_t *parent;
 
@@ -90,14 +91,15 @@ struct _hb_unicode_funcs_t {
 };
 
 
-#if defined(HAVE_GLIB) && !defined(__APPLE__)
-extern HB_INTERNAL hb_unicode_funcs_t _hb_glib_unicode_funcs;
+#ifdef HAVE_GLIB
+extern HB_INTERNAL const hb_unicode_funcs_t _hb_glib_unicode_funcs;
 #define _hb_unicode_funcs_default _hb_glib_unicode_funcs
 #elif defined(HAVE_ICU)
-extern HB_INTERNAL hb_unicode_funcs_t _hb_icu_unicode_funcs;
+extern HB_INTERNAL const hb_unicode_funcs_t _hb_icu_unicode_funcs;
 #define _hb_unicode_funcs_default _hb_icu_unicode_funcs
 #else
-extern HB_INTERNAL hb_unicode_funcs_t _hb_unicode_funcs_nil;
+#define HB_UNICODE_FUNCS_NIL 1
+extern HB_INTERNAL const hb_unicode_funcs_t _hb_unicode_funcs_nil;
 #define _hb_unicode_funcs_default _hb_unicode_funcs_nil
 #endif
 
@@ -109,10 +111,53 @@ _hb_unicode_modified_combining_class (hb_unicode_funcs_t *ufuncs,
 static inline hb_bool_t
 _hb_unicode_is_variation_selector (hb_codepoint_t unicode)
 {
-  return unlikely ((unicode >=  0x180B && unicode <=  0x180D) || /* MONGOLIAN FREE VARIATION SELECTOR ONE..THREE */
-		   (unicode >=  0xFE00 && unicode <=  0xFE0F) || /* VARIATION SELECTOR-1..16 */
-		   (unicode >= 0xE0100 && unicode <= 0xE01EF));  /* VARIATION SELECTOR-17..256 */
+  return unlikely (hb_in_ranges<hb_codepoint_t> (unicode,
+						 0x180B, 0x180D, /* MONGOLIAN FREE VARIATION SELECTOR ONE..THREE */
+						 0xFE00, 0xFE0F, /* VARIATION SELECTOR-1..16 */
+						 0xE0100, 0xE01EF));  /* VARIATION SELECTOR-17..256 */
 }
 
+/* Zero-Width invisible characters:
+ *
+ *  00AD  SOFT HYPHEN
+ *  034F  COMBINING GRAPHEME JOINER
+ *
+ *  180E  MONGOLIAN VOWEL SEPARATOR
+ *
+ *  200B  ZERO WIDTH SPACE
+ *  200C  ZERO WIDTH NON-JOINER
+ *  200D  ZERO WIDTH JOINER
+ *  200E  LEFT-TO-RIGHT MARK
+ *  200F  RIGHT-TO-LEFT MARK
+ *
+ *  2028  LINE SEPARATOR
+ *
+ *  202A  LEFT-TO-RIGHT EMBEDDING
+ *  202B  RIGHT-TO-LEFT EMBEDDING
+ *  202C  POP DIRECTIONAL FORMATTING
+ *  202D  LEFT-TO-RIGHT OVERRIDE
+ *  202E  RIGHT-TO-LEFT OVERRIDE
+ *
+ *  2060  WORD JOINER
+ *  2061  FUNCTION APPLICATION
+ *  2062  INVISIBLE TIMES
+ *  2063  INVISIBLE SEPARATOR
+ *
+ *  FEFF  ZERO WIDTH NO-BREAK SPACE
+ */
+static inline hb_bool_t
+_hb_unicode_is_zero_width (hb_codepoint_t ch)
+{
+  return ((ch & ~0x007F) == 0x2000 && (hb_in_ranges<hb_codepoint_t> (ch,
+								     0x200B, 0x200F,
+								     0x202A, 0x202E,
+								     0x2060, 0x2064) ||
+				       (ch == 0x2028))) ||
+	  unlikely (ch == 0x0009 ||
+		    ch == 0x00AD ||
+		    ch == 0x034F ||
+		    ch == 0x180E ||
+		    ch == 0xFEFF);
+}
 
 #endif /* HB_UNICODE_PRIVATE_HH */

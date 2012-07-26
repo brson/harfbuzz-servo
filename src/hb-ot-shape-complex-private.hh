@@ -35,22 +35,23 @@
 
 
 /* buffer var allocations, used during the entire shaping process */
-#define general_category() var1.u8[0] /* unicode general_category (hb_unicode_general_category_t) */
-#define combining_class() var1.u8[1] /* unicode combining_class (uint8_t) */
+#define unicode_props0()	var1.u8[0]
+#define unicode_props1()	var1.u8[1]
+
+/* buffer var allocations, used during the GSUB/GPOS processing */
+#define props_cache()		var1.u16[1] /* GSUB/GPOS glyph_props cache */
+#define syllable()		var2.u8[0] /* GSUB/GPOS shaping boundaries */
+#define lig_props()		var2.u8[1] /* GSUB/GPOS ligature tracking */
 
 /* buffer var allocations, used by complex shapers */
-#define complex_var_persistent_u8_0()	var2.u8[0]
-#define complex_var_persistent_u8_1()	var2.u8[1]
-#define complex_var_persistent_u16()	var2.u16[0]
-#define complex_var_temporary_u8_0()	var2.u8[2]
-#define complex_var_temporary_u8_1()	var2.u8[3]
-#define complex_var_temporary_u16()	var2.u16[1]
+#define complex_var_persistent_u8_0()	var2.u8[2]
+#define complex_var_persistent_u8_1()	var2.u8[3]
+#define complex_var_temporary_u8()	var2.u8[0]
 
 
 #define HB_COMPLEX_SHAPERS_IMPLEMENT_SHAPERS \
   HB_COMPLEX_SHAPER_IMPLEMENT (default) /* should be first */ \
   HB_COMPLEX_SHAPER_IMPLEMENT (arabic) \
-  HB_COMPLEX_SHAPER_IMPLEMENT (hangul) \
   HB_COMPLEX_SHAPER_IMPLEMENT (indic) \
   HB_COMPLEX_SHAPER_IMPLEMENT (thai) \
   /* ^--- Add new shapers here */
@@ -66,7 +67,7 @@ enum hb_ot_complex_shaper_t {
 static inline hb_ot_complex_shaper_t
 hb_ot_shape_complex_categorize (const hb_segment_properties_t *props)
 {
-  switch ((int) props->script)
+  switch ((hb_tag_t) props->script)
   {
     default:
       return hb_ot_complex_shaper_default;
@@ -84,12 +85,6 @@ hb_ot_shape_complex_categorize (const hb_segment_properties_t *props)
     case HB_SCRIPT_MANDAIC:
 
       return hb_ot_complex_shaper_arabic;
-
-
-    /* Unicode-1.1 additions */
-    case HB_SCRIPT_HANGUL:
-
-      return hb_ot_complex_shaper_hangul;
 
 
     /* Unicode-1.1 additions */
@@ -136,7 +131,7 @@ hb_ot_shape_complex_categorize (const hb_segment_properties_t *props)
     /* Simple */
 
     /* Unicode-1.1 additions */
-    /* TODO These two need their own shaper I guess? */
+    /* These have their own shaper now. */
     case HB_SCRIPT_LAO:
     case HB_SCRIPT_THAI:
 
@@ -247,11 +242,41 @@ hb_ot_shape_complex_collect_features (hb_ot_complex_shaper_t shaper,
 
 
 /*
+ * override_features()
+ *
+ * Called during shape_plan().
+ *
+ * Shapers should use map to override features and add callbacks after
+ * common features are added.
+ */
+
+typedef void hb_ot_shape_complex_override_features_func_t (hb_ot_map_builder_t *map, const hb_segment_properties_t  *props);
+#define HB_COMPLEX_SHAPER_IMPLEMENT(name) \
+  HB_INTERNAL hb_ot_shape_complex_override_features_func_t _hb_ot_shape_complex_override_features_##name;
+  HB_COMPLEX_SHAPERS_IMPLEMENT_SHAPERS
+#undef HB_COMPLEX_SHAPER_IMPLEMENT
+
+static inline void
+hb_ot_shape_complex_override_features (hb_ot_complex_shaper_t shaper,
+				       hb_ot_map_builder_t *map,
+				       const hb_segment_properties_t  *props)
+{
+  switch (shaper) {
+    default:
+#define HB_COMPLEX_SHAPER_IMPLEMENT(name) \
+    case hb_ot_complex_shaper_##name:	_hb_ot_shape_complex_override_features_##name (map, props); return;
+    HB_COMPLEX_SHAPERS_IMPLEMENT_SHAPERS
+#undef HB_COMPLEX_SHAPER_IMPLEMENT
+  }
+}
+
+
+/*
  * normalization_preference()
  *
  * Called during shape_execute().
  *
- * Shapers should return TRUE if it prefers decomposed (NFD) input rather than precomposed (NFC).
+ * Shapers should return true if it prefers decomposed (NFD) input rather than precomposed (NFC).
  */
 
 typedef hb_ot_shape_normalization_mode_t hb_ot_shape_complex_normalization_preference_func_t (void);

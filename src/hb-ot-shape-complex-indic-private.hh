@@ -37,6 +37,23 @@
 #define indic_category() complex_var_persistent_u8_0() /* indic_category_t */
 #define indic_position() complex_var_persistent_u8_1() /* indic_matra_category_t */
 
+
+
+#define IN_HALF_BLOCK(u, Base) (((u) & ~0x7F) == (Base))
+
+#define IS_DEVA(u) (IN_HALF_BLOCK (u, 0x900))
+#define IS_BENG(u) (IN_HALF_BLOCK (u, 0x980))
+#define IS_GURM(u) (IN_HALF_BLOCK (u, 0xA00))
+#define IS_GUJA(u) (IN_HALF_BLOCK (u, 0xA80))
+#define IS_ORYA(u) (IN_HALF_BLOCK (u, 0xB00))
+#define IS_TAML(u) (IN_HALF_BLOCK (u, 0xB80))
+#define IS_TELU(u) (IN_HALF_BLOCK (u, 0xC00))
+#define IS_KNDA(u) (IN_HALF_BLOCK (u, 0xC80))
+#define IS_MLYM(u) (IN_HALF_BLOCK (u, 0xD00))
+#define IS_SINH(u) (IN_HALF_BLOCK (u, 0xD80))
+
+
+
 #define INDIC_TABLE_ELEMENT_TYPE uint8_t
 
 /* Cateories used in the OpenType spec:
@@ -47,7 +64,6 @@
 enum indic_category_t {
   OT_X = 0,
   OT_C,
-  OT_Ra, /* Not explicitly listed in the OT spec, but used in the grammar. */
   OT_V,
   OT_N,
   OT_H,
@@ -57,20 +73,42 @@ enum indic_category_t {
   OT_SM,
   OT_VD,
   OT_A,
-  OT_NBSP
+  OT_NBSP,
+  OT_DOTTEDCIRCLE, /* Not in the spec, but special in Uniscribe. /Very very/ special! */
+  OT_RS, /* Register Shifter, used in Khmer OT spec */
+  OT_Coeng,
+  OT_Repha,
+  OT_Ra /* Not explicitly listed in the OT spec, but used in the grammar. */
 };
 
 /* Visual positions in a syllable from left to right. */
 enum indic_position_t {
-  POS_PRE = 1,
-  POS_BASE = 2,
-  POS_ABOVE = 3,
-  POS_BELOW = 4,
-  POS_POST = 5
+  POS_START,
+
+  POS_RA_TO_BECOME_REPH,
+  POS_PRE_M,
+  POS_PRE_C,
+
+  POS_BASE_C,
+  POS_AFTER_MAIN,
+
+  POS_ABOVE_C,
+
+  POS_BEFORE_SUB,
+  POS_BELOW_C,
+  POS_AFTER_SUB,
+
+  POS_BEFORE_POST,
+  POS_POST_C,
+  POS_AFTER_POST,
+
+  POS_FINAL_C,
+  POS_SMVD,
+
+  POS_END
 };
 
-/* Categories used in IndicSyllabicCategory.txt from UCD */
-/* The assignments are guesswork */
+/* Categories used in IndicSyllabicCategory.txt from UCD. */
 enum indic_syllabic_category_t {
   INDIC_SYLLABIC_CATEGORY_OTHER			= OT_X,
 
@@ -83,10 +121,10 @@ enum indic_syllabic_category_t {
   INDIC_SYLLABIC_CATEGORY_CONSONANT_MEDIAL	= OT_C,
   INDIC_SYLLABIC_CATEGORY_CONSONANT_PLACEHOLDER	= OT_NBSP,
   INDIC_SYLLABIC_CATEGORY_CONSONANT_SUBJOINED	= OT_C,
-  INDIC_SYLLABIC_CATEGORY_CONSONANT_REPHA	= OT_C,
+  INDIC_SYLLABIC_CATEGORY_CONSONANT_REPHA	= OT_Repha,
   INDIC_SYLLABIC_CATEGORY_MODIFYING_LETTER	= OT_X,
   INDIC_SYLLABIC_CATEGORY_NUKTA			= OT_N,
-  INDIC_SYLLABIC_CATEGORY_REGISTER_SHIFTER	= OT_X,
+  INDIC_SYLLABIC_CATEGORY_REGISTER_SHIFTER	= OT_RS,
   INDIC_SYLLABIC_CATEGORY_TONE_LETTER		= OT_X,
   INDIC_SYLLABIC_CATEGORY_TONE_MARK		= OT_X,
   INDIC_SYLLABIC_CATEGORY_VIRAMA		= OT_H,
@@ -98,29 +136,21 @@ enum indic_syllabic_category_t {
 
 /* Categories used in IndicSMatraCategory.txt from UCD */
 enum indic_matra_category_t {
-  INDIC_MATRA_CATEGORY_NOT_APPLICABLE		= POS_BASE,
+  INDIC_MATRA_CATEGORY_NOT_APPLICABLE		= POS_END,
 
-  INDIC_MATRA_CATEGORY_LEFT			= POS_PRE - 1, /* Move *before* existing "pre" chars */
-  INDIC_MATRA_CATEGORY_TOP			= POS_ABOVE,
-  INDIC_MATRA_CATEGORY_BOTTOM			= POS_BELOW,
-  INDIC_MATRA_CATEGORY_RIGHT			= POS_POST,
+  INDIC_MATRA_CATEGORY_LEFT			= POS_PRE_C,
+  INDIC_MATRA_CATEGORY_TOP			= POS_ABOVE_C,
+  INDIC_MATRA_CATEGORY_BOTTOM			= POS_BELOW_C,
+  INDIC_MATRA_CATEGORY_RIGHT			= POS_POST_C,
 
-  /* We don't really care much about these since we decompose them
-   * in the generic pre-shaping layer.  They will only be used if
-   * the font does not cover the decomposition.  In which case, we
-   * define these as aliases to the place we want the split-matra
-   * glyph to show up.  Quite arbitrary.
-   *
-   * TODO: There are some split matras without Unicode decompositions.
-   * We have to figure out what to do with them.
-   */
-  INDIC_MATRA_CATEGORY_BOTTOM_AND_RIGHT		= 8 | INDIC_MATRA_CATEGORY_BOTTOM,
-  INDIC_MATRA_CATEGORY_LEFT_AND_RIGHT		= 8 | INDIC_MATRA_CATEGORY_LEFT,
-  INDIC_MATRA_CATEGORY_TOP_AND_BOTTOM		= 8 | INDIC_MATRA_CATEGORY_BOTTOM,
-  INDIC_MATRA_CATEGORY_TOP_AND_BOTTOM_AND_RIGHT	= 8 | INDIC_MATRA_CATEGORY_BOTTOM,
-  INDIC_MATRA_CATEGORY_TOP_AND_LEFT		= 8 | INDIC_MATRA_CATEGORY_LEFT,
-  INDIC_MATRA_CATEGORY_TOP_AND_LEFT_AND_RIGHT	= 8 | INDIC_MATRA_CATEGORY_LEFT,
-  INDIC_MATRA_CATEGORY_TOP_AND_RIGHT		= 8 | INDIC_MATRA_CATEGORY_RIGHT,
+  /* These should resolve to the position of the last part of the split sequence. */
+  INDIC_MATRA_CATEGORY_BOTTOM_AND_RIGHT		= INDIC_MATRA_CATEGORY_RIGHT,
+  INDIC_MATRA_CATEGORY_LEFT_AND_RIGHT		= INDIC_MATRA_CATEGORY_RIGHT,
+  INDIC_MATRA_CATEGORY_TOP_AND_BOTTOM		= INDIC_MATRA_CATEGORY_BOTTOM,
+  INDIC_MATRA_CATEGORY_TOP_AND_BOTTOM_AND_RIGHT	= INDIC_MATRA_CATEGORY_RIGHT,
+  INDIC_MATRA_CATEGORY_TOP_AND_LEFT		= INDIC_MATRA_CATEGORY_TOP,
+  INDIC_MATRA_CATEGORY_TOP_AND_LEFT_AND_RIGHT	= INDIC_MATRA_CATEGORY_RIGHT,
+  INDIC_MATRA_CATEGORY_TOP_AND_RIGHT		= INDIC_MATRA_CATEGORY_RIGHT,
 
   INDIC_MATRA_CATEGORY_INVISIBLE		= INDIC_MATRA_CATEGORY_NOT_APPLICABLE,
   INDIC_MATRA_CATEGORY_OVERSTRUCK		= INDIC_MATRA_CATEGORY_NOT_APPLICABLE,
@@ -137,127 +167,26 @@ enum indic_matra_category_t {
 
 #include "hb-ot-shape-complex-indic-table.hh"
 
-/* XXX
- * This is a hack for now.  We should:
- * 1. Move this data into the main Indic table,
- * and/or
- * 2. Probe font lookups to determine consonant positions.
- */
-static const struct consonant_position_t {
-  hb_codepoint_t u;
-  indic_position_t position;
-} consonant_positions[] = {
-  {0x0930, POS_BELOW},
-  {0x09AC, POS_BELOW},
-  {0x09AF, POS_POST},
-  {0x09B0, POS_BELOW},
-  {0x09F0, POS_BELOW},
-  {0x0A2F, POS_POST},
-  {0x0A30, POS_BELOW},
-  {0x0A35, POS_BELOW},
-  {0x0A39, POS_BELOW},
-  {0x0AB0, POS_BELOW},
-  {0x0B24, POS_BELOW},
-  {0x0B28, POS_BELOW},
-  {0x0B2C, POS_BELOW},
-  {0x0B2D, POS_BELOW},
-  {0x0B2E, POS_BELOW},
-  {0x0B2F, POS_POST},
-  {0x0B30, POS_BELOW},
-  {0x0B32, POS_BELOW},
-  {0x0B33, POS_BELOW},
-  {0x0B5F, POS_POST},
-  {0x0B71, POS_BELOW},
-  {0x0C15, POS_BELOW},
-  {0x0C16, POS_BELOW},
-  {0x0C17, POS_BELOW},
-  {0x0C18, POS_BELOW},
-  {0x0C19, POS_BELOW},
-  {0x0C1A, POS_BELOW},
-  {0x0C1B, POS_BELOW},
-  {0x0C1C, POS_BELOW},
-  {0x0C1D, POS_BELOW},
-  {0x0C1E, POS_BELOW},
-  {0x0C1F, POS_BELOW},
-  {0x0C20, POS_BELOW},
-  {0x0C21, POS_BELOW},
-  {0x0C22, POS_BELOW},
-  {0x0C23, POS_BELOW},
-  {0x0C24, POS_BELOW},
-  {0x0C25, POS_BELOW},
-  {0x0C26, POS_BELOW},
-  {0x0C27, POS_BELOW},
-  {0x0C28, POS_BELOW},
-  {0x0C2A, POS_BELOW},
-  {0x0C2B, POS_BELOW},
-  {0x0C2C, POS_BELOW},
-  {0x0C2D, POS_BELOW},
-  {0x0C2E, POS_BELOW},
-  {0x0C2F, POS_BELOW},
-  {0x0C30, POS_BELOW},
-  {0x0C32, POS_BELOW},
-  {0x0C33, POS_BELOW},
-  {0x0C35, POS_BELOW},
-  {0x0C36, POS_BELOW},
-  {0x0C37, POS_BELOW},
-  {0x0C38, POS_BELOW},
-  {0x0C39, POS_BELOW},
-  {0x0C95, POS_BELOW},
-  {0x0C96, POS_BELOW},
-  {0x0C97, POS_BELOW},
-  {0x0C98, POS_BELOW},
-  {0x0C99, POS_BELOW},
-  {0x0C9A, POS_BELOW},
-  {0x0C9B, POS_BELOW},
-  {0x0C9C, POS_BELOW},
-  {0x0C9D, POS_BELOW},
-  {0x0C9E, POS_BELOW},
-  {0x0C9F, POS_BELOW},
-  {0x0CA0, POS_BELOW},
-  {0x0CA1, POS_BELOW},
-  {0x0CA2, POS_BELOW},
-  {0x0CA3, POS_BELOW},
-  {0x0CA4, POS_BELOW},
-  {0x0CA5, POS_BELOW},
-  {0x0CA6, POS_BELOW},
-  {0x0CA7, POS_BELOW},
-  {0x0CA8, POS_BELOW},
-  {0x0CAA, POS_BELOW},
-  {0x0CAB, POS_BELOW},
-  {0x0CAC, POS_BELOW},
-  {0x0CAD, POS_BELOW},
-  {0x0CAE, POS_BELOW},
-  {0x0CAF, POS_BELOW},
-  {0x0CB0, POS_BELOW},
-  {0x0CB2, POS_BELOW},
-  {0x0CB3, POS_BELOW},
-  {0x0CB5, POS_BELOW},
-  {0x0CB6, POS_BELOW},
-  {0x0CB7, POS_BELOW},
-  {0x0CB8, POS_BELOW},
-  {0x0CB9, POS_BELOW},
-  {0x0CDE, POS_BELOW},
-  {0x0D2F, POS_POST},
-  {0x0D30, POS_POST},
-  {0x0D32, POS_BELOW},
-  {0x0D35, POS_POST},
-};
 
 /* XXX
  * This is a hack for now.  We should move this data into the main Indic table.
+ * Or completely remove it and just check in the tables.
  */
 static const hb_codepoint_t ra_chars[] = {
   0x0930, /* Devanagari */
   0x09B0, /* Bengali */
   0x09F0, /* Bengali */
-//0x09F1, /* Bengali */
-//0x0A30, /* Gurmukhi */
+  0x0A30, /* Gurmukhi */	/* No Reph */
   0x0AB0, /* Gujarati */
   0x0B30, /* Oriya */
-//0x0BB0, /* Tamil */
-//0x0C30, /* Telugu */
+  0x0BB0, /* Tamil */		/* No Reph */
+  0x0C30, /* Telugu */		/* Reph formed only with ZWJ */
   0x0CB0, /* Kannada */
-//0x0D30, /* Malayalam */
+  0x0D30, /* Malayalam */	/* No Reph, Logical Repha */
+
+  0x0DBB, /* Sinhala */		/* Reph formed only with ZWJ */
+
+  0x179A, /* Khmer */		/* No Reph, Visual Repha */
 };
 
 

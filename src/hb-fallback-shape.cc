@@ -31,19 +31,27 @@
 hb_bool_t
 _hb_fallback_shape (hb_font_t          *font,
 		    hb_buffer_t        *buffer,
-		    const hb_feature_t *features,
-		    unsigned int        num_features)
+		    const hb_feature_t *features HB_UNUSED,
+		    unsigned int        num_features HB_UNUSED)
 {
+  /* TODO Save the space character in the font? */
+  hb_codepoint_t space;
+  hb_font_get_glyph (font, ' ', 0, &space);
+
   buffer->guess_properties ();
+  buffer->clear_positions ();
 
   unsigned int count = buffer->len;
 
   for (unsigned int i = 0; i < count; i++)
+  {
+    if (_hb_unicode_is_zero_width (buffer->info[i].codepoint)) {
+      buffer->info[i].codepoint = space;
+      buffer->pos[i].x_advance = 0;
+      buffer->pos[i].y_advance = 0;
+      continue;
+    }
     hb_font_get_glyph (font, buffer->info[i].codepoint, 0, &buffer->info[i].codepoint);
-
-  buffer->clear_positions ();
-
-  for (unsigned int i = 0; i < count; i++) {
     hb_font_get_glyph_advance_for_direction (font, buffer->info[i].codepoint,
 					     buffer->props.direction,
 					     &buffer->pos[i].x_advance,
@@ -57,5 +65,5 @@ _hb_fallback_shape (hb_font_t          *font,
   if (HB_DIRECTION_IS_BACKWARD (buffer->props.direction))
     hb_buffer_reverse (buffer);
 
-  return TRUE;
+  return true;
 }

@@ -32,10 +32,15 @@
 #include "hb-object-private.hh"
 
 
+/* TODO Make this faster and memmory efficient. */
 
-struct _hb_set_t
+struct hb_set_t
 {
+  hb_object_header_t header;
+  ASSERT_POD ();
+
   inline void init (void) {
+    header.init ();
     clear ();
   }
   inline void fini (void) {
@@ -51,8 +56,14 @@ struct _hb_set_t
   }
   inline void add (hb_codepoint_t g)
   {
+    if (unlikely (g == SENTINEL)) return;
     if (unlikely (g > MAX_G)) return;
     elt (g) |= mask (g);
+  }
+  inline void add_range (hb_codepoint_t a, hb_codepoint_t b)
+  {
+    for (unsigned int i = a; i < b + 1; i++)
+      add (i);
   }
   inline void del (hb_codepoint_t g)
   {
@@ -102,38 +113,60 @@ struct _hb_set_t
     for (unsigned int i = 0; i < ELTS; i++)
       elts[i] &= ~other->elts[i];
   }
-  inline hb_codepoint_t min (void) const
+  inline void symmetric_difference (const hb_set_t *other)
+  {
+    for (unsigned int i = 0; i < ELTS; i++)
+      elts[i] ^= other->elts[i];
+  }
+  inline bool next (hb_codepoint_t *codepoint)
+  {
+    if (unlikely (*codepoint == SENTINEL)) {
+      hb_codepoint_t i = get_min ();
+      if (i != SENTINEL) {
+        *codepoint = i;
+	return true;
+      } else
+        return false;
+    }
+    for (hb_codepoint_t i = *codepoint + 1; i < MAX_G + 1; i++)
+      if (has (i)) {
+        *codepoint = i;
+	return true;
+      }
+    return false;
+  }
+  inline hb_codepoint_t get_min (void) const
   {
     for (unsigned int i = 0; i < ELTS; i++)
       if (elts[i])
 	for (unsigned int j = 0; i < BITS; j++)
 	  if (elts[i] & (1 << j))
 	    return i * BITS + j;
-    return 0;
+    return SENTINEL;
   }
-  inline hb_codepoint_t max (void) const
+  inline hb_codepoint_t get_max (void) const
   {
     for (unsigned int i = ELTS; i; i--)
       if (elts[i - 1])
 	for (unsigned int j = BITS; j; j--)
 	  if (elts[i - 1] & (1 << (j - 1)))
 	    return (i - 1) * BITS + (j - 1);
-    return 0;
+    return SENTINEL;
   }
 
   typedef uint32_t elt_t;
-  static const unsigned int MAX_G = 65536 - 1;
+  static const unsigned int MAX_G = 65536 - 1; /* XXX Fix this... */
   static const unsigned int SHIFT = 5;
   static const unsigned int BITS = (1 << SHIFT);
   static const unsigned int MASK = BITS - 1;
   static const unsigned int ELTS = (MAX_G + 1 + (BITS - 1)) / BITS;
+  static  const hb_codepoint_t SENTINEL = (hb_codepoint_t) -1;
 
   elt_t &elt (hb_codepoint_t g) { return elts[g >> SHIFT]; }
   elt_t elt (hb_codepoint_t g) const { return elts[g >> SHIFT]; }
   elt_t mask (hb_codepoint_t g) const { return elt_t (1) << (g & MASK); }
 
-  hb_object_header_t header;
-  elt_t elts[ELTS]; /* 8kb */
+  elt_t elts[ELTS]; /* XXX 8kb */
 
   ASSERT_STATIC (sizeof (elt_t) * 8 == BITS);
   ASSERT_STATIC (sizeof (elt_t) * 8 * ELTS > MAX_G);

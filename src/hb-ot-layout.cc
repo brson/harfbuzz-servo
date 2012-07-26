@@ -94,7 +94,7 @@ hb_ot_layout_has_glyph_classes (hb_face_t *face)
   return _get_gdef (face).has_glyph_classes ();
 }
 
-unsigned int
+static inline unsigned int
 _hb_ot_layout_get_glyph_property (hb_face_t       *face,
 				  hb_glyph_info_t *info)
 {
@@ -107,9 +107,31 @@ _hb_ot_layout_get_glyph_property (hb_face_t       *face,
   return info->props_cache();
 }
 
-static hb_bool_t
+static inline hb_bool_t
+_hb_ot_layout_match_properties_mark (hb_face_t      *face,
+				     hb_codepoint_t  glyph,
+				     unsigned int    glyph_props,
+				     unsigned int    lookup_props)
+{
+  /* If using mark filtering sets, the high short of
+   * lookup_props has the set index.
+   */
+  if (lookup_props & LookupFlag::UseMarkFilteringSet)
+    return _get_gdef (face).mark_set_covers (lookup_props >> 16, glyph);
+
+  /* The second byte of lookup_props has the meaning
+   * "ignore marks of attachment type different than
+   * the attachment type specified."
+   */
+  if (lookup_props & LookupFlag::MarkAttachmentType)
+    return (lookup_props & LookupFlag::MarkAttachmentType) == (glyph_props & LookupFlag::MarkAttachmentType);
+
+  return true;
+}
+
+static inline hb_bool_t
 _hb_ot_layout_match_properties (hb_face_t      *face,
-				hb_codepoint_t  codepoint,
+				hb_codepoint_t  glyph,
 				unsigned int    glyph_props,
 				unsigned int    lookup_props)
 {
@@ -119,21 +141,8 @@ _hb_ot_layout_match_properties (hb_face_t      *face,
   if (glyph_props & lookup_props & LookupFlag::IgnoreFlags)
     return false;
 
-  if (glyph_props & HB_OT_LAYOUT_GLYPH_CLASS_MARK)
-  {
-    /* If using mark filtering sets, the high short of
-     * lookup_props has the set index.
-     */
-    if (lookup_props & LookupFlag::UseMarkFilteringSet)
-      return _get_gdef (face).mark_set_covers (lookup_props >> 16, codepoint);
-
-    /* The second byte of lookup_props has the meaning
-     * "ignore marks of attachment type different than
-     * the attachment type specified."
-     */
-    if (lookup_props & LookupFlag::MarkAttachmentType && glyph_props & LookupFlag::MarkAttachmentType)
-      return (lookup_props & LookupFlag::MarkAttachmentType) == (glyph_props & LookupFlag::MarkAttachmentType);
-  }
+  if (unlikely (glyph_props & HB_OT_LAYOUT_GLYPH_CLASS_MARK))
+    return _hb_ot_layout_match_properties_mark (face, glyph, glyph_props, lookup_props);
 
   return true;
 }
@@ -147,7 +156,7 @@ _hb_ot_layout_check_glyph_property (hb_face_t    *face,
   unsigned int property;
 
   property = _hb_ot_layout_get_glyph_property (face, ginfo);
-  (void) (property_out && (*property_out = property));
+  *property_out = property;
 
   return _hb_ot_layout_match_properties (face, ginfo->codepoint, property, lookup_props);
 }
@@ -161,9 +170,10 @@ _hb_ot_layout_skip_mark (hb_face_t    *face,
   unsigned int property;
 
   property = _hb_ot_layout_get_glyph_property (face, ginfo);
-  (void) (property_out && (*property_out = property));
+  if (property_out)
+    *property_out = property;
 
-  /* If it's a mark, skip it we don't accept it. */
+  /* If it's a mark, skip it if we don't accept it. */
   if (unlikely (property & HB_OT_LAYOUT_GLYPH_CLASS_MARK))
     return !_hb_ot_layout_match_properties (face, ginfo->codepoint, property, lookup_props);
 
@@ -232,19 +242,19 @@ hb_ot_layout_table_find_script (hb_face_t    *face,
   const GSUBGPOS &g = get_gsubgpos_table (face, table_tag);
 
   if (g.find_script_index (script_tag, script_index))
-    return TRUE;
+    return true;
 
   /* try finding 'DFLT' */
   if (g.find_script_index (HB_OT_TAG_DEFAULT_SCRIPT, script_index))
-    return FALSE;
+    return false;
 
   /* try with 'dflt'; MS site has had typos and many fonts use it now :(.
    * including many versions of DejaVu Sans Mono! */
   if (g.find_script_index (HB_OT_TAG_DEFAULT_LANGUAGE, script_index))
-    return FALSE;
+    return false;
 
   if (script_index) *script_index = HB_OT_LAYOUT_NO_SCRIPT_INDEX;
-  return FALSE;
+  return false;
 }
 
 hb_bool_t
@@ -262,7 +272,7 @@ hb_ot_layout_table_choose_script (hb_face_t      *face,
     if (g.find_script_index (*script_tags, script_index)) {
       if (chosen_script)
         *chosen_script = *script_tags;
-      return TRUE;
+      return true;
     }
     script_tags++;
   }
@@ -271,14 +281,14 @@ hb_ot_layout_table_choose_script (hb_face_t      *face,
   if (g.find_script_index (HB_OT_TAG_DEFAULT_SCRIPT, script_index)) {
     if (chosen_script)
       *chosen_script = HB_OT_TAG_DEFAULT_SCRIPT;
-    return FALSE;
+    return false;
   }
 
   /* try with 'dflt'; MS site has had typos and many fonts use it now :( */
   if (g.find_script_index (HB_OT_TAG_DEFAULT_LANGUAGE, script_index)) {
     if (chosen_script)
       *chosen_script = HB_OT_TAG_DEFAULT_LANGUAGE;
-    return FALSE;
+    return false;
   }
 
   /* try with 'latn'; some old fonts put their features there even though
@@ -287,13 +297,13 @@ hb_ot_layout_table_choose_script (hb_face_t      *face,
   if (g.find_script_index (HB_OT_TAG_LATIN_SCRIPT, script_index)) {
     if (chosen_script)
       *chosen_script = HB_OT_TAG_LATIN_SCRIPT;
-    return FALSE;
+    return false;
   }
 
   if (script_index) *script_index = HB_OT_LAYOUT_NO_SCRIPT_INDEX;
   if (chosen_script)
     *chosen_script = HB_OT_LAYOUT_NO_SCRIPT_INDEX;
-  return FALSE;
+  return false;
 }
 
 unsigned int
@@ -333,14 +343,14 @@ hb_ot_layout_script_find_language (hb_face_t    *face,
   const Script &s = get_gsubgpos_table (face, table_tag).get_script (script_index);
 
   if (s.find_lang_sys_index (language_tag, language_index))
-    return TRUE;
+    return true;
 
   /* try with 'dflt'; MS site has had typos and many fonts use it now :( */
   if (s.find_lang_sys_index (HB_OT_TAG_DEFAULT_LANGUAGE, language_index))
-    return FALSE;
+    return false;
 
   if (language_index) *language_index = HB_OT_LAYOUT_DEFAULT_LANGUAGE_INDEX;
-  return FALSE;
+  return false;
 }
 
 hb_bool_t
@@ -415,12 +425,12 @@ hb_ot_layout_language_find_feature (hb_face_t    *face,
 
     if (feature_tag == g.get_feature_tag (f_index)) {
       if (feature_index) *feature_index = f_index;
-      return TRUE;
+      return true;
     }
   }
 
   if (feature_index) *feature_index = HB_OT_LAYOUT_NO_FEATURE_INDEX;
-  return FALSE;
+  return false;
 }
 
 unsigned int
@@ -446,6 +456,17 @@ hb_bool_t
 hb_ot_layout_has_substitution (hb_face_t *face)
 {
   return &_get_gsub (face) != &Null(GSUB);
+}
+
+hb_bool_t
+hb_ot_layout_would_substitute_lookup (hb_face_t            *face,
+				      const hb_codepoint_t *glyphs,
+				      unsigned int          glyphs_length,
+				      unsigned int          lookup_index)
+{
+  if (unlikely (glyphs_length < 1 || glyphs_length > 2)) return false;
+  hb_would_apply_context_t c (face, glyphs[0], glyphs_length == 2 ? glyphs[1] : -1);
+  return _get_gsub (face).would_substitute_lookup (&c, lookup_index);
 }
 
 void

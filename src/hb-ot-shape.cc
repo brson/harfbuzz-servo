@@ -29,6 +29,7 @@
 #include "hb-ot-shape-private.hh"
 #include "hb-ot-shape-normalize-private.hh"
 
+#include "hb-ot-layout-private.hh"
 #include "hb-font-private.hh"
 #include "hb-set-private.hh"
 
@@ -42,6 +43,7 @@ hb_tag_t common_features[] = {
   HB_TAG('m','k','m','k'),
   HB_TAG('r','l','i','g'),
 };
+
 
 hb_tag_t horizontal_features[] = {
   HB_TAG('c','a','l','t'),
@@ -122,6 +124,8 @@ hb_ot_shape_collect_features (hb_ot_shape_planner_t          *planner,
   else
     ADD_FEATURES (vertical_features);
 
+  hb_ot_shape_complex_override_features (planner->shaper, &planner->map, props);
+
 #undef ADD_FEATURES
 
   for (unsigned int i = 0; i < num_user_features; i++) {
@@ -170,19 +174,12 @@ hb_ot_shape_setup_masks (hb_ot_shape_context_t *c)
 
 /* Prepare */
 
-static inline void
-set_unicode_props (hb_glyph_info_t *info, hb_unicode_funcs_t *unicode)
-{
-  info->general_category() = hb_unicode_general_category (unicode, info->codepoint);
-  info->combining_class() = _hb_unicode_modified_combining_class (unicode, info->codepoint);
-}
-
 static void
 hb_set_unicode_props (hb_buffer_t *buffer)
 {
   unsigned int count = buffer->len;
   for (unsigned int i = 0; i < count; i++)
-    set_unicode_props (&buffer->info[i], buffer->unicode);
+    _hb_glyph_info_set_unicode_props (&buffer->info[i], buffer->unicode);
 }
 
 static void
@@ -190,11 +187,11 @@ hb_form_clusters (hb_buffer_t *buffer)
 {
   unsigned int count = buffer->len;
   for (unsigned int i = 1; i < count; i++)
-    if (FLAG (buffer->info[i].general_category()) &
+    if (FLAG (_hb_glyph_info_get_general_category (&buffer->info[i])) &
 	(FLAG (HB_UNICODE_GENERAL_CATEGORY_SPACING_MARK) |
 	 FLAG (HB_UNICODE_GENERAL_CATEGORY_ENCLOSING_MARK) |
 	 FLAG (HB_UNICODE_GENERAL_CATEGORY_NON_SPACING_MARK)))
-      buffer->info[i].cluster = buffer->info[i - 1].cluster; /* XXX do the min() here */
+      buffer->merge_clusters (i - 1, i + 1);
 }
 
 static void
@@ -250,16 +247,16 @@ hb_map_glyphs (hb_font_t    *font,
 
   unsigned int count = buffer->len - 1;
   for (buffer->idx = 0; buffer->idx < count;) {
-    if (unlikely (_hb_unicode_is_variation_selector (buffer->info[buffer->idx + 1].codepoint))) {
-      hb_font_get_glyph (font, buffer->info[buffer->idx].codepoint, buffer->info[buffer->idx + 1].codepoint, &glyph);
+    if (unlikely (_hb_unicode_is_variation_selector (buffer->cur(+1).codepoint))) {
+      hb_font_get_glyph (font, buffer->cur().codepoint, buffer->cur(+1).codepoint, &glyph);
       buffer->replace_glyphs (2, 1, &glyph);
     } else {
-      hb_font_get_glyph (font, buffer->info[buffer->idx].codepoint, 0, &glyph);
+      hb_font_get_glyph (font, buffer->cur().codepoint, 0, &glyph);
       buffer->replace_glyph (glyph);
     }
   }
   if (likely (buffer->idx < buffer->len)) {
-    hb_font_get_glyph (font, buffer->info[buffer->idx].codepoint, 0, &glyph);
+    hb_font_get_glyph (font, buffer->cur().codepoint, 0, &glyph);
     buffer->replace_glyph (glyph);
   }
   buffer->swap_buffers ();
@@ -333,7 +330,7 @@ hb_ot_position_complex (hb_ot_shape_context_t *c)
 						   &c->buffer->pos[i].y_offset);
     }
 
-    c->applied_position_complex = TRUE;
+    c->applied_position_complex = true;
   }
 
   hb_ot_layout_position_finish (c->buffer);
@@ -379,6 +376,23 @@ hb_position_complex_fallback_visual (hb_ot_shape_context_t *c)
   hb_truetype_kern (c);
 }
 
+static void
+hb_hide_zerowidth (hb_ot_shape_context_t *c)
+{
+  hb_codepoint_t space;
+  if (!hb_font_get_glyph (c->font, ' ', 0, &space))
+    return; /* No point! */
+
+  unsigned int count = c->buffer->len;
+  for (unsigned int i = 0; i < count; i++)
+    if (unlikely (!is_a_ligature (c->buffer->info[i]) &&
+		  _hb_glyph_info_is_zero_width (&c->buffer->info[i]))) {
+      c->buffer->info[i].codepoint = space;
+      c->buffer->pos[i].x_advance = 0;
+      c->buffer->pos[i].y_advance = 0;
+    }
+}
+
 
 /* Do it! */
 
@@ -390,10 +404,12 @@ hb_ot_shape_execute_internal (hb_ot_shape_context_t *c)
   /* Save the original direction, we use it later. */
   c->target_direction = c->buffer->props.direction;
 
-  HB_BUFFER_ALLOCATE_VAR (c->buffer, general_category);
-  HB_BUFFER_ALLOCATE_VAR (c->buffer, combining_class);
+  HB_BUFFER_ALLOCATE_VAR (c->buffer, unicode_props0);
+  HB_BUFFER_ALLOCATE_VAR (c->buffer, unicode_props1);
 
-  hb_set_unicode_props (c->buffer); /* BUFFER: Set general_category and combining_class */
+  c->buffer->clear_output ();
+
+  hb_set_unicode_props (c->buffer);
 
   hb_form_clusters (c->buffer);
 
@@ -427,8 +443,10 @@ hb_ot_shape_execute_internal (hb_ot_shape_context_t *c)
       hb_position_complex_fallback_visual (c);
   }
 
-  HB_BUFFER_DEALLOCATE_VAR (c->buffer, combining_class);
-  HB_BUFFER_DEALLOCATE_VAR (c->buffer, general_category);
+  hb_hide_zerowidth (c);
+
+  HB_BUFFER_DEALLOCATE_VAR (c->buffer, unicode_props1);
+  HB_BUFFER_DEALLOCATE_VAR (c->buffer, unicode_props0);
 
   c->buffer->props.direction = c->target_direction;
 
@@ -477,7 +495,7 @@ _hb_ot_shape (hb_font_t          *font,
   hb_ot_shape_plan_internal (&plan, font->face, &buffer->props, features, num_features);
   hb_ot_shape_execute (&plan, font, buffer, features, num_features);
 
-  return TRUE;
+  return true;
 }
 
 

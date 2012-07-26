@@ -85,7 +85,7 @@ hb_unicode_compose_nil (hb_unicode_funcs_t *ufuncs    HB_UNUSED,
 			hb_codepoint_t     *ab        HB_UNUSED,
 			void               *user_data HB_UNUSED)
 {
-  return FALSE;
+  return false;
 }
 
 static hb_bool_t
@@ -95,27 +95,15 @@ hb_unicode_decompose_nil (hb_unicode_funcs_t *ufuncs    HB_UNUSED,
 			  hb_codepoint_t     *b         HB_UNUSED,
 			  void               *user_data HB_UNUSED)
 {
-  return FALSE;
+  return false;
 }
 
-
-hb_unicode_funcs_t _hb_unicode_funcs_nil = {
-  HB_OBJECT_HEADER_STATIC,
-
-  NULL, /* parent */
-  TRUE, /* immutable */
-  {
-#define HB_UNICODE_FUNC_IMPLEMENT(name) hb_unicode_##name##_nil,
-    HB_UNICODE_FUNCS_IMPLEMENT_CALLBACKS
-#undef HB_UNICODE_FUNC_IMPLEMENT
-  }
-};
 
 
 hb_unicode_funcs_t *
 hb_unicode_funcs_get_default (void)
 {
-  return &_hb_unicode_funcs_default;
+  return const_cast<hb_unicode_funcs_t *> (&_hb_unicode_funcs_default);
 }
 
 hb_unicode_funcs_t *
@@ -124,10 +112,10 @@ hb_unicode_funcs_create (hb_unicode_funcs_t *parent)
   hb_unicode_funcs_t *ufuncs;
 
   if (!(ufuncs = hb_object_create<hb_unicode_funcs_t> ()))
-    return &_hb_unicode_funcs_nil;
+    return hb_unicode_funcs_get_empty ();
 
   if (!parent)
-    parent = &_hb_unicode_funcs_nil;
+    parent = hb_unicode_funcs_get_empty ();
 
   hb_unicode_funcs_make_immutable (parent);
   ufuncs->parent = hb_unicode_funcs_reference (parent);
@@ -142,10 +130,24 @@ hb_unicode_funcs_create (hb_unicode_funcs_t *parent)
   return ufuncs;
 }
 
+
+extern HB_INTERNAL const hb_unicode_funcs_t _hb_unicode_funcs_nil;
+const hb_unicode_funcs_t _hb_unicode_funcs_nil = {
+  HB_OBJECT_HEADER_STATIC,
+
+  NULL, /* parent */
+  true, /* immutable */
+  {
+#define HB_UNICODE_FUNC_IMPLEMENT(name) hb_unicode_##name##_nil,
+    HB_UNICODE_FUNCS_IMPLEMENT_CALLBACKS
+#undef HB_UNICODE_FUNC_IMPLEMENT
+  }
+};
+
 hb_unicode_funcs_t *
 hb_unicode_funcs_get_empty (void)
 {
-  return &_hb_unicode_funcs_nil;
+  return const_cast<hb_unicode_funcs_t *> (&_hb_unicode_funcs_nil);
 }
 
 hb_unicode_funcs_t *
@@ -193,7 +195,7 @@ hb_unicode_funcs_make_immutable (hb_unicode_funcs_t *ufuncs)
   if (hb_object_is_inert (ufuncs))
     return;
 
-  ufuncs->immutable = TRUE;
+  ufuncs->immutable = true;
 }
 
 hb_bool_t
@@ -205,7 +207,7 @@ hb_unicode_funcs_is_immutable (hb_unicode_funcs_t *ufuncs)
 hb_unicode_funcs_t *
 hb_unicode_funcs_get_parent (hb_unicode_funcs_t *ufuncs)
 {
-  return ufuncs->parent ? ufuncs->parent : &_hb_unicode_funcs_nil;
+  return ufuncs->parent ? ufuncs->parent : hb_unicode_funcs_get_empty ();
 }
 
 
@@ -256,6 +258,14 @@ hb_unicode_compose (hb_unicode_funcs_t *ufuncs,
 		    hb_codepoint_t     *ab)
 {
   *ab = 0;
+  /* XXX, this belongs to indic normalizer. */
+  if ((FLAG (hb_unicode_general_category (ufuncs, a)) &
+       (FLAG (HB_UNICODE_GENERAL_CATEGORY_SPACING_MARK) |
+        FLAG (HB_UNICODE_GENERAL_CATEGORY_ENCLOSING_MARK) |
+        FLAG (HB_UNICODE_GENERAL_CATEGORY_NON_SPACING_MARK))))
+    return false;
+  /* XXX, add composition-exclusion exceptions to Indic shaper. */
+  if (a == 0x09AF && b == 0x09BC) { *ab = 0x09DF; return true; }
   return ufuncs->func.compose (ufuncs, a, b, ab, ufuncs->user_data.compose);
 }
 
@@ -265,6 +275,39 @@ hb_unicode_decompose (hb_unicode_funcs_t *ufuncs,
 		      hb_codepoint_t     *a,
 		      hb_codepoint_t     *b)
 {
+  /* XXX FIXME, move these to complex shapers and propagage to normalizer.*/
+  switch (ab) {
+    case 0x0AC9  : return false;
+
+    case 0x0931  : return false;
+    case 0x0B94  : return false;
+
+    /* These ones have Unicode decompositions, but we do it
+     * this way to be close to what Uniscribe does. */
+    case 0x0DDA  : *a = 0x0DD9; *b= 0x0DDA; return true;
+    case 0x0DDC  : *a = 0x0DD9; *b= 0x0DDC; return true;
+    case 0x0DDD  : *a = 0x0DD9; *b= 0x0DDD; return true;
+    case 0x0DDE  : *a = 0x0DD9; *b= 0x0DDE; return true;
+
+    case 0x0F77  : *a = 0x0FB2; *b= 0x0F81; return true;
+    case 0x0F79  : *a = 0x0FB3; *b= 0x0F81; return true;
+    case 0x17BE  : *a = 0x17C1; *b= 0x17BE; return true;
+    case 0x17BF  : *a = 0x17C1; *b= 0x17BF; return true;
+    case 0x17C0  : *a = 0x17C1; *b= 0x17C0; return true;
+    case 0x17C4  : *a = 0x17C1; *b= 0x17C4; return true;
+    case 0x17C5  : *a = 0x17C1; *b= 0x17C5; return true;
+    case 0x1925  : *a = 0x1920; *b= 0x1923; return true;
+    case 0x1926  : *a = 0x1920; *b= 0x1924; return true;
+    case 0x1B3C  : *a = 0x1B42; *b= 0x1B3C; return true;
+    case 0x1112E  : *a = 0x11127; *b= 0x11131; return true;
+    case 0x1112F  : *a = 0x11127; *b= 0x11132; return true;
+#if 0
+    case 0x0B57  : *a = 0xno decomp, -> RIGHT; return true;
+    case 0x1C29  : *a = 0xno decomp, -> LEFT; return true;
+    case 0xA9C0  : *a = 0xno decomp, -> RIGHT; return true;
+    case 0x111BF  : *a = 0xno decomp, -> ABOVE; return true;
+#endif
+  }
   *a = ab; *b = 0;
   return ufuncs->func.decompose (ufuncs, ab, a, b, ufuncs->user_data.decompose);
 }
@@ -319,6 +362,12 @@ _hb_unicode_modified_combining_class (hb_unicode_funcs_t *ufuncs,
       /* 25 sin dot */      11,
     };
     c = permuted_hebrew_classes[c - 10];
+  }
+  else if (unlikely (unicode == 0x0E3A)) /* THAI VOWEL SIGN PHINTHU */
+  {
+    /* Assign 104, so it reorders after the THAI ccc=103 marks.
+     * Uniscribe does this. */
+    c = 104;
   }
 
   return c;

@@ -1,13 +1,16 @@
 # Process this file with automake to produce Makefile.in
 
 NULL =
+SUBDIRS =
+DIST_SUBDIRS =
 BUILT_SOURCES =
 EXTRA_DIST =
 CLEANFILES =
 DISTCLEANFILES =
 MAINTAINERCLEANFILES =
+DISTCHECK_CONFIGURE_FLAGS = --enable-introspection
 
-# The following warning options are useful for debugging: -Wpadded -Wcast-align
+# The following warning options are useful for debugging: -Wpadded
 #AM_CXXFLAGS =
 
 lib_LTLIBRARIES = libharfbuzz.la
@@ -15,9 +18,11 @@ lib_LTLIBRARIES = libharfbuzz.la
 HBCFLAGS =
 HBLIBS =
 HBSOURCES =  \
+	hb-atomic-private.hh \
 	hb-blob.cc \
 	hb-buffer-private.hh \
 	hb-buffer.cc \
+	hb-cache-private.hh \
 	hb-common.cc \
 	hb-fallback-shape-private.hh \
 	hb-fallback-shape.cc \
@@ -135,7 +140,24 @@ HBSOURCES += hb-uniscribe.cc hb-uniscribe-private.hh
 HBHEADERS += hb-uniscribe.h
 endif
 
-CXXLINK = $(LINK)
+if HAVE_CORETEXT
+HBCFLAGS += $(CORETEXT_CFLAGS)
+HBLIBS   += $(CORETEXT_LIBS)
+HBSOURCES += hb-coretext.cc hb-coretext-private.hh
+HBHEADERS += hb-coretext.h
+endif
+
+if HAVE_HB_OLD
+SUBDIRS += hb-old
+HBCFLAGS += -I$(srcdir)/hb-old
+HBLIBS   += hb-old/libhb-old.la
+HBSOURCES += hb-old.cc hb-old-private.hh
+endif
+DIST_SUBDIRS += hb-old
+
+
+# Use a C linker, not C++; Don't link to libstdc++
+libharfbuzz_la_LINK = $(LINK) $(libharfbuzz_la_LDFLAGS)
 libharfbuzz_la_SOURCES = $(HBSOURCES) $(HBHEADERS)
 nodist_libharfbuzz_la_SOURCES = $(nodist_HBSOURCES)
 libharfbuzz_la_CPPFLAGS = $(HBCFLAGS)
@@ -173,7 +195,7 @@ hb-ot-shape-complex-indic-machine.hh: hb-ot-shape-complex-indic-machine.rl
 	$(AM_V_GEN)$(top_srcdir)/missing --run ragel -e -F1 -o "$@.tmp" "$<" && \
 	mv "$@.tmp" "$@" || ( $(RM) "$@.tmp" && false )
 
-noinst_PROGRAMS = main indic
+noinst_PROGRAMS = main indic test-would-substitute
 bin_PROGRAMS =
 
 main_SOURCES = main.cc
@@ -184,11 +206,16 @@ indic_SOURCES = indic.cc
 indic_CPPFLAGS = $(HBCFLAGS)
 indic_LDADD = libharfbuzz.la $(HBLIBS)
 
+test_would_substitute_SOURCES = test-would-substitute.cc
+test_would_substitute_CPPFLAGS = $(HBCFLAGS) $(FREETYPE_CFLAGS)
+test_would_substitute_LDADD = libharfbuzz.la $(HBLIBS) $(FREETYPE_LIBS)
+
 dist_check_SCRIPTS = \
 	check-c-linkage-decls.sh \
 	check-header-guards.sh \
-	check-internal-symbols.sh \
 	check-includes.sh \
+	check-internal-symbols.sh \
+	check-static-inits.sh \
 	$(NULL)
 
 if HAVE_ICU
@@ -204,8 +231,26 @@ TESTS_ENVIRONMENT = \
 	HBHEADERS="$(HBHEADERS)" \
 	$(NULL)
 
-scan:
-	g-ir-scanner $(HBCFLAGS) $(HBHEADERS) -n hb --strip-prefix=hb --library libharfbuzz.la
-
+#-include $(INTROSPECTION_MAKEFILE)
+#INTROSPECTION_GIRS = hb-1.0.gir
+#INTROSPECTION_SCANNER_ARGS = -I$(srcdir) -n hb --identifier-prefix=hb_
+#INTROSPECTION_COMPILER_ARGS = --includedir=$(srcdir)
+#
+#if HAVE_INTROSPECTION
+#
+#hb-1.0.gir: libharfbuzz.la
+#hb_1_0_gir_INCLUDES = GObject-2.0
+#hb_1_0_gir_CFLAGS = $(INCLUDES) $(HBCFLAGS) -DHB_H -DHB_H_IN -DHB_OT_H -DHB_OT_H_IN
+#hb_1_0_gir_LIBS = libharfbuzz.la
+#hb_1_0_gir_FILES = $(HBHEADERS)
+#
+#girdir = $(datadir)/gir-1.0
+#gir_DATA = $(INTROSPECTION_GIRS)
+#
+#typelibdir = $(libdir)/girepository-1.0
+#typelib_DATA = $(INTROSPECTION_GIRS:.gir=.typelib)
+#
+#CLEANFILES += $(gir_DATA) $(typelib_DATA)
+#endif
 
 -include $(top_srcdir)/git.mk

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2011  Google, Inc.
+ * Copyright © 2011,2012  Google, Inc.
  *
  *  This is part of HarfBuzz, a text shaping library.
  *
@@ -24,7 +24,7 @@
  * Google Author(s): Behdad Esfahbod
  */
 
-#define _WIN32_WINNT 0x0500
+#define _WIN32_WINNT 0x0600
 
 #include "hb-private.hh"
 
@@ -60,12 +60,11 @@ DWORD GetFontData(
 
 static bool
 populate_log_font (LOGFONTW  *lf,
-		   HDC        hdc,
 		   hb_font_t *font)
 {
   memset (lf, 0, sizeof (*lf));
-  int dpi = GetDeviceCaps (hdc, LOGPIXELSY);
   lf->lfHeight = -font->y_scale;
+  lf->lfCharSet = DEFAULT_CHARSET;
 
   hb_blob_t *blob = Sanitizer<name>::sanitize (hb_face_reference_table (font->face, HB_TAG ('n','a','m','e')));
   const name *name_table = Sanitizer<name>::lock_instance (blob);
@@ -77,18 +76,18 @@ populate_log_font (LOGFONTW  *lf,
 
   if (unlikely (!len)) {
     DEBUG_MSG (UNISCRIBE, NULL, "Didn't find English name table entry");
-    return FALSE;
+    return false;
   }
   if (unlikely (len >= LF_FACESIZE)) {
     DEBUG_MSG (UNISCRIBE, NULL, "Font name too long");
-    return FALSE;
+    return false;
   }
 
   for (unsigned int i = 0; i < len; i++)
     lf->lfFaceName[i] = hb_be_uint16 (lf->lfFaceName[i]);
   lf->lfFaceName[len] = 0;
 
-  return TRUE;
+  return true;
 }
 
 
@@ -133,7 +132,7 @@ _hb_uniscribe_face_get_data (hb_face_t *face)
 
   if (unlikely (!hb_face_set_user_data (face, &hb_uniscribe_data_key, data,
 					(hb_destroy_func_t) _hb_uniscribe_face_data_destroy,
-					FALSE)))
+					false)))
   {
     _hb_uniscribe_face_data_destroy (data);
     data = (hb_uniscribe_face_data_t *) hb_face_get_user_data (face, &hb_uniscribe_data_key);
@@ -178,7 +177,7 @@ _hb_uniscribe_font_get_data (hb_font_t *font)
 
   data->hdc = GetDC (NULL);
 
-  if (unlikely (!populate_log_font (&data->log_font, data->hdc, font)))
+  if (unlikely (!populate_log_font (&data->log_font, font)))
     DEBUG_MSG (UNISCRIBE, font, "Font populate_log_font() failed");
   else {
     data->hfont = CreateFontIndirectW (&data->log_font);
@@ -190,7 +189,7 @@ _hb_uniscribe_font_get_data (hb_font_t *font)
 
   if (unlikely (!hb_font_set_user_data (font, &hb_uniscribe_data_key, data,
 					(hb_destroy_func_t) _hb_uniscribe_font_data_destroy,
-					FALSE)))
+					false)))
   {
     _hb_uniscribe_font_data_destroy (data);
     data = (hb_uniscribe_font_data_t *) hb_font_get_user_data (font, &hb_uniscribe_data_key);
@@ -233,7 +232,7 @@ _hb_uniscribe_shape (hb_font_t          *font,
 #define FAIL(...) \
   HB_STMT_START { \
     DEBUG_MSG (UNISCRIBE, NULL, __VA_ARGS__); \
-    return FALSE; \
+    return false; \
   } HB_STMT_END;
 
   hb_uniscribe_face_data_t *face_data = _hb_uniscribe_face_get_data (font->face);
@@ -245,7 +244,7 @@ _hb_uniscribe_shape (hb_font_t          *font,
     FAIL ("Couldn't get font font");
 
   if (unlikely (!buffer->len))
-    return TRUE;
+    return true;
 
   HRESULT hr;
 
@@ -258,8 +257,8 @@ retry:
 
 #define ALLOCATE_ARRAY(Type, name, len) \
   Type *name = (Type *) scratch; \
-  scratch += len * sizeof (name[0]); \
-  scratch_size -= len * sizeof (name[0]);
+  scratch += (len) * sizeof ((name)[0]); \
+  scratch_size -= (len) * sizeof ((name)[0]);
 
 #define utf16_index() var1.u32
 
@@ -295,8 +294,9 @@ retry:
   ALLOCATE_ARRAY (GOFFSET, offsets, glyphs_size);
   ALLOCATE_ARRAY (uint32_t, vis_clusters, glyphs_size);
 
+#undef ALLOCATE_ARRAY
 
-#define MAX_ITEMS 10
+#define MAX_ITEMS 256
 
   SCRIPT_ITEM items[MAX_ITEMS + 1];
   SCRIPT_CONTROL bidi_control = {0};
@@ -305,11 +305,11 @@ retry:
   int item_count;
 
   /* MinGW32 doesn't define fMergeNeutralItems, so we bruteforce */
-  //bidi_control.fMergeNeutralItems = TRUE;
+  //bidi_control.fMergeNeutralItems = true;
   *(uint32_t*)&bidi_control |= 1<<24;
 
   bidi_state.uBidiLevel = HB_DIRECTION_IS_FORWARD (buffer->props.direction) ? 0 : 1;
-//  bidi_state.fOverrideDirection = 1;
+  bidi_state.fOverrideDirection = 1;
 
   hr = ScriptItemizeOpenType (wchars,
 			      chars_len,
@@ -331,71 +331,83 @@ retry:
     /* TODO setup ranges */
   }
 
-  OPENTYPE_TAG language_tag = hb_ot_tag_from_language (buffer->props.language);
+  OPENTYPE_TAG language_tag = hb_uint32_swap (hb_ot_tag_from_language (buffer->props.language));
 
   unsigned int glyphs_offset = 0;
   unsigned int glyphs_len;
-  for (unsigned int i = 0; i < item_count; i++)
+  bool backward = HB_DIRECTION_IS_BACKWARD (buffer->props.direction);
+  for (unsigned int j = 0; j < item_count; j++)
   {
-      unsigned int chars_offset = items[i].iCharPos;
-      unsigned int item_chars_len = items[i + 1].iCharPos - chars_offset;
-      OPENTYPE_TAG script_tag = script_tags[i]; /* XXX buffer->props.script */
+    unsigned int i = backward ? item_count - 1 - j : j;
+    unsigned int chars_offset = items[i].iCharPos;
+    unsigned int item_chars_len = items[i + 1].iCharPos - chars_offset;
 
-      hr = ScriptShapeOpenType (font_data->hdc,
-				&font_data->script_cache,
-				&items[i].a,
-				script_tag,
-				language_tag,
-				range_char_counts,
-				range_properties,
-				range_count,
-				wchars + chars_offset,
-				item_chars_len,
-				glyphs_size - glyphs_offset,
-				/* out */
-				log_clusters + chars_offset,
-				char_props + chars_offset,
-				glyphs + glyphs_offset,
-				glyph_props + glyphs_offset,
-				(int *) &glyphs_len);
+  retry_shape:
+    hr = ScriptShapeOpenType (font_data->hdc,
+			      &font_data->script_cache,
+			      &items[i].a,
+			      script_tags[i],
+			      language_tag,
+			      range_char_counts,
+			      range_properties,
+			      range_count,
+			      wchars + chars_offset,
+			      item_chars_len,
+			      glyphs_size - glyphs_offset,
+			      /* out */
+			      log_clusters + chars_offset,
+			      char_props + chars_offset,
+			      glyphs + glyphs_offset,
+			      glyph_props + glyphs_offset,
+			      (int *) &glyphs_len);
 
-      if (unlikely (items[i].a.fNoGlyphIndex))
-	FAIL ("ScriptShapeOpenType() set fNoGlyphIndex");
-      if (unlikely (hr == E_OUTOFMEMORY))
-      {
-        buffer->ensure (buffer->allocated * 2);
-	if (buffer->in_error)
-	  FAIL ("Buffer resize failed");
-	goto retry;
-      }
-      if (unlikely (hr == USP_E_SCRIPT_NOT_IN_FONT))
+    if (unlikely (items[i].a.fNoGlyphIndex))
+      FAIL ("ScriptShapeOpenType() set fNoGlyphIndex");
+    if (unlikely (hr == E_OUTOFMEMORY))
+    {
+      buffer->ensure (buffer->allocated * 2);
+      if (buffer->in_error)
+	FAIL ("Buffer resize failed");
+      goto retry;
+    }
+    if (unlikely (hr == USP_E_SCRIPT_NOT_IN_FONT))
+    {
+      if (items[i].a.eScript == SCRIPT_UNDEFINED)
 	FAIL ("ScriptShapeOpenType() failed: Font doesn't support script");
-      if (unlikely (FAILED (hr)))
-	FAIL ("ScriptShapeOpenType() failed: 0x%08xL", hr);
+      items[i].a.eScript = SCRIPT_UNDEFINED;
+      goto retry_shape;
+    }
+    if (unlikely (FAILED (hr)))
+    {
+      FAIL ("ScriptShapeOpenType() failed: 0x%08xL", hr);
+    }
 
-      hr = ScriptPlaceOpenType (font_data->hdc,
-				&font_data->script_cache,
-				&items[i].a,
-				script_tag,
-				language_tag,
-				range_char_counts,
-				range_properties,
-				range_count,
-				wchars + chars_offset,
-				log_clusters + chars_offset,
-				char_props + chars_offset,
-				item_chars_len,
-				glyphs + glyphs_offset,
-				glyph_props + glyphs_offset,
-				glyphs_len,
-				/* out */
-				advances + glyphs_offset,
-				offsets + glyphs_offset,
-				NULL);
-      if (unlikely (FAILED (hr)))
-	FAIL ("ScriptPlaceOpenType() failed: 0x%08xL", hr);
+    for (unsigned int j = chars_offset; j < chars_offset + item_chars_len; j++)
+      log_clusters[j] += glyphs_offset;
 
-      glyphs_offset += glyphs_len;
+    hr = ScriptPlaceOpenType (font_data->hdc,
+			      &font_data->script_cache,
+			      &items[i].a,
+			      script_tags[i],
+			      language_tag,
+			      range_char_counts,
+			      range_properties,
+			      range_count,
+			      wchars + chars_offset,
+			      log_clusters + chars_offset,
+			      char_props + chars_offset,
+			      item_chars_len,
+			      glyphs + glyphs_offset,
+			      glyph_props + glyphs_offset,
+			      glyphs_len,
+			      /* out */
+			      advances + glyphs_offset,
+			      offsets + glyphs_offset,
+			      NULL);
+    if (unlikely (FAILED (hr)))
+      FAIL ("ScriptPlaceOpenType() failed: 0x%08xL", hr);
+
+    glyphs_offset += glyphs_len;
   }
   glyphs_len = glyphs_offset;
 
@@ -409,13 +421,13 @@ retry:
     uint32_t *p = &vis_clusters[log_clusters[buffer->info[i].utf16_index()]];
     *p = MIN (*p, buffer->info[i].cluster);
   }
-  if (HB_DIRECTION_IS_FORWARD (buffer->props.direction)) {
+  if (!backward) {
     for (unsigned int i = 1; i < glyphs_len; i++)
-      if (!glyph_props[i].sva.fClusterStart)
+      if (vis_clusters[i] == -1)
 	vis_clusters[i] = vis_clusters[i - 1];
   } else {
     for (int i = glyphs_len - 2; i >= 0; i--)
-      if (!glyph_props[i].sva.fClusterStart)
+      if (vis_clusters[i] == -1)
 	vis_clusters[i] = vis_clusters[i + 1];
   }
 
@@ -456,7 +468,7 @@ retry:
   }
 
   /* Wow, done! */
-  return TRUE;
+  return true;
 }
 
 
